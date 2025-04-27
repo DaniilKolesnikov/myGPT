@@ -3,6 +3,7 @@ import argparse
 import tiktoken
 import torch.cuda.amp as amp  # Import AMP for mixed precision training
 import os
+import glob
 
 torch.manual_seed(1337)
 
@@ -28,6 +29,8 @@ parser.add_argument('--checkpoint_path', type=str, default='model_checkpoints',
                    help='Path to save checkpoints during training')
 parser.add_argument('--resume_from_checkpoint', type=str, default=None,
                    help='Path to a checkpoint to resume training from')
+parser.add_argument('--keep_n_checkpoints', type=int, default=3,
+                   help='Number of most recent checkpoints to keep (default: 3)')
 args = parser.parse_args()
 
 # Update batch size from arguments
@@ -37,7 +40,7 @@ batch_size = args.batch_size
 os.makedirs(args.checkpoint_path, exist_ok=True)
 
 # Create GradScaler for mixed precision training
-scaler = amp.GradScaler(enabled=args.mixed_precision)
+scaler = torch.GradScaler(enabled=args.mixed_precision)
 
 with open('jokes.txt', 'r') as f:
     text = f.read()
@@ -91,7 +94,7 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             # Use the same precision setting for evaluation
-            with amp.autocast(enabled=args.mixed_precision):
+            with torch.autocast(device_type='cuda', enabled=args.mixed_precision):
                 logits, loss = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
@@ -117,6 +120,14 @@ for iter in tqdm(range(max_iters)):
         checkpoint_filename = os.path.join(args.checkpoint_path, f'checkpoint_{iter}.pth')
         torch.save(model.state_dict(), checkpoint_filename)
         print(f"Checkpoint saved as {checkpoint_filename}")
+        
+        # Rotate checkpoints - keep only the most recent N
+        if args.keep_n_checkpoints > 0:
+            checkpoints = sorted(glob.glob(os.path.join(args.checkpoint_path, 'checkpoint_*.pth')))
+            if len(checkpoints) > args.keep_n_checkpoints:
+                for checkpoint_to_delete in checkpoints[:-args.keep_n_checkpoints]:
+                    os.remove(checkpoint_to_delete)
+                    print(f"Removed old checkpoint: {checkpoint_to_delete}")
 
     # Zero gradients
     optimizer.zero_grad()
@@ -127,7 +138,7 @@ for iter in tqdm(range(max_iters)):
         X, Y = get_batch('train')
         
         # Forward pass with automatic mixed precision (when enabled)
-        with amp.autocast(enabled=args.mixed_precision):
+        with torch.autocast(device_type='cuda', enabled=args.mixed_precision):
             logits, loss = model(X, Y)
         
         # Backward pass with gradient scaling (for mixed precision)

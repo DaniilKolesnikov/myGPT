@@ -60,7 +60,7 @@ model.to(device)
 model.load_state_dict(torch.load(args.model_file))
 
 # Create autocast context for mixed precision
-autocast = amp.autocast(enabled=args.mixed_precision)
+autocast = torch.autocast(device_type='cuda', enabled=args.mixed_precision)
 
 # For memory efficiency, potentially reduce block size for generation
 generation_block_size = block_size // 2 if args.memory_efficient else block_size
