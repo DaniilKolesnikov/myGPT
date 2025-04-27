@@ -31,6 +31,8 @@ parser.add_argument('--resume_from_checkpoint', type=str, default=None,
                    help='Path to a checkpoint to resume training from')
 parser.add_argument('--keep_n_checkpoints', type=int, default=3,
                    help='Number of most recent checkpoints to keep (default: 3)')
+parser.add_argument('--train_text', type=str, default='jokes.txt',
+                   help='Path to the training text file (default: jokes.txt)')
 args = parser.parse_args()
 
 # Update batch size from arguments
@@ -42,7 +44,7 @@ os.makedirs(args.checkpoint_path, exist_ok=True)
 # Create GradScaler for mixed precision training
 scaler = torch.GradScaler(enabled=args.mixed_precision)
 
-with open('jokes.txt', 'r') as f:
+with open(args.train_text, 'r', encoding='utf-8') as f:
     text = f.read()
 
 # Initialize tokenizer based on the argument
@@ -123,7 +125,9 @@ for iter in tqdm(range(max_iters)):
         
         # Rotate checkpoints - keep only the most recent N
         if args.keep_n_checkpoints > 0:
-            checkpoints = sorted(glob.glob(os.path.join(args.checkpoint_path, 'checkpoint_*.pth')))
+            checkpoints = glob.glob(os.path.join(args.checkpoint_path, 'checkpoint_*.pth'))
+            # Extract iteration numbers and sort numerically
+            checkpoints = sorted(checkpoints, key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
             if len(checkpoints) > args.keep_n_checkpoints:
                 for checkpoint_to_delete in checkpoints[:-args.keep_n_checkpoints]:
                     os.remove(checkpoint_to_delete)

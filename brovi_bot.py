@@ -24,9 +24,11 @@ parser.add_argument('--model_file', type=str, default='model.pth',
                    help='Path to the model file to load')
 parser.add_argument('--memory_efficient', action='store_true',
                    help='Run in memory-efficient mode, with reduced context size')
+parser.add_argument('--sample_file', type=str, default='jokes.txt',
+                   help='Sample text file to build character vocabulary (for char encoding)')
 args = parser.parse_args()
 
-with open('jokes.txt', 'r') as f:
+with open(args.sample_file, 'r', encoding='utf-8') as f:
     text = f.read()
 
 # Initialize tokenizer based on the argument
