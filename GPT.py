@@ -2,15 +2,16 @@ import torch
 
 import torch.nn as nn
 import torch.nn.functional as F
+import gc  # Garbage collector for manually freeing memory
 
 from tqdm import tqdm
 #--------------------------------------------------
 # Hyperparameters
 #--------------------------------------------------
-batch_size = 64
+batch_size = 64  # Can be reduced to save memory
 block_size = 256
 max_iters = 5000
-eval_interval = 500
+eval_interval = 100
 learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 50
@@ -19,6 +20,13 @@ n_heads = 6
 dropout = 0.2
 n_layers = 6
 #--------------------------------------------------
+
+# Add a utility function to print memory stats
+def print_gpu_memory():
+    if torch.cuda.is_available():
+        print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+        print(f"GPU memory reserved: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+        print(f"Max memory allocated: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
 
 class Head(nn.Module):
     def __init__(self, head_size):
@@ -113,14 +121,34 @@ class GPT(nn.Module):
 
         return logits, loss
     
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx, max_new_tokens, temperature=1.0):
+        # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
-            idx_cond = idx[:, -block_size:]
-            logits, loss = self(idx_cond)
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
+            # Free up memory before generation step
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            # crop idx to the last block_size tokens if needed
+            idx_cond = idx[:, -block_size:] if idx.size(1) > block_size else idx
+            
+            # Forward pass in eval mode and with no_grad for memory efficiency
+            self.eval()
+            with torch.no_grad():
+                # get the predictions
+                logits, loss = self(idx_cond)
+                # focus only on the last time step
+                logits = logits[:, -1, :] # becomes (B, C)
+                # apply temperature
+                if temperature != 1.0:
+                    logits = logits / temperature
+                # apply softmax to get probabilities
+                probs = F.softmax(logits, dim=-1) # (B, C)
+                # sample from the distribution
+                idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
+            
+            # append sampled index to the running sequence
+            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+            
         return idx
     
 #--------------------------------------------------
