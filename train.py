@@ -33,6 +33,12 @@ parser.add_argument('--keep_n_checkpoints', type=int, default=3,
                    help='Number of most recent checkpoints to keep (default: 3)')
 parser.add_argument('--train_text', type=str, default='jokes.txt',
                    help='Path to the training text file (default: jokes.txt)')
+parser.add_argument('--lr_scheduler', type=str, default='constant', choices=['constant', 'cosine', 'linear'],
+                   help='Learning rate scheduler: constant, cosine, or linear decay')
+parser.add_argument('--lr_warmup_steps', type=int, default=0,
+                   help='Number of warmup steps for learning rate')
+parser.add_argument('--min_lr', type=float, default=1e-5,
+                   help='Minimum learning rate for schedulers')
 args = parser.parse_args()
 
 # Update batch size from arguments
@@ -44,8 +50,14 @@ os.makedirs(args.checkpoint_path, exist_ok=True)
 # Create GradScaler for mixed precision training
 scaler = torch.GradScaler(enabled=args.mixed_precision)
 
-with open(args.train_text, 'r', encoding='utf-8') as f:
-    text = f.read()
+if args.train_text == 'mixed':
+    with open('jokes.txt', 'r', encoding='utf-8') as f:
+        text = f.read()
+    with open('poems.txt', 'r', encoding='utf-8') as f:
+        text += f.read()
+else:
+    with open(args.train_text, 'r', encoding='utf-8') as f:
+        text = f.read()
 
 # Initialize tokenizer based on the argument
 if args.tokenizer == 'char':
@@ -107,6 +119,23 @@ model = GPT(vocab_size)
 model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
+# Create learning rate scheduler based on argument
+if args.lr_scheduler == 'cosine':
+    # Cosine annealing scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=max_iters - args.lr_warmup_steps, 
+        eta_min=args.min_lr
+    )
+elif args.lr_scheduler == 'linear':
+    # Linear decay
+    lambda1 = lambda epoch: max(args.min_lr / learning_rate, 
+                               1.0 - (epoch - args.lr_warmup_steps) / (max_iters - args.lr_warmup_steps))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
+else:
+    # Constant learning rate (no scheduling)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
+
 # Resume from checkpoint if specified
 if args.resume_from_checkpoint:
     model.load_state_dict(torch.load(args.resume_from_checkpoint))
@@ -118,7 +147,8 @@ if args.resume_from_checkpoint:
 for iter in tqdm(range(max_iters)):
     if iter % eval_interval == 0:
         losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, lr: {current_lr:.7f}")
         checkpoint_filename = os.path.join(args.checkpoint_path, f'checkpoint_{iter}.pth')
         torch.save(model.state_dict(), checkpoint_filename)
         print(f"Checkpoint saved as {checkpoint_filename}")
@@ -151,7 +181,9 @@ for iter in tqdm(range(max_iters)):
     # Unscale gradients and perform optimizer step
     scaler.step(optimizer)
     scaler.update()
-
+    
+    # Step the scheduler
+    scheduler.step()
 
 # Save the model with appropriate name based on tokenizer
 model_filename = 'model_tiktoken.pth' if args.tokenizer == 'tiktoken' else 'model.pth'

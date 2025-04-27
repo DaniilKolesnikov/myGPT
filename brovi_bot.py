@@ -28,8 +28,14 @@ parser.add_argument('--sample_file', type=str, default='jokes.txt',
                    help='Sample text file to build character vocabulary (for char encoding)')
 args = parser.parse_args()
 
-with open(args.sample_file, 'r', encoding='utf-8') as f:
-    text = f.read()
+if args.sample_file == 'mixed':
+    with open('jokes.txt', 'r', encoding='utf-8') as f:
+        text = f.read()
+    with open('poems.txt', 'r', encoding='utf-8') as f:
+        text += f.read()
+else:
+    with open(args.sample_file, 'r', encoding='utf-8') as f:
+        text = f.read()
 
 # Initialize tokenizer based on the argument
 if args.tokenizer == 'char':
